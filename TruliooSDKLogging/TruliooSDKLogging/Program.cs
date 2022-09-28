@@ -1,10 +1,22 @@
 ﻿using System.IO.Compression;
 using Trulioo.Client.V1;
+using Trulioo.Client.V1.Exceptions;
 
-var context = new Context("username", "password", TimeSpan.FromSeconds(5), new LoggingHandler(new Logger()));
+var context = new Context("username", "password", TimeSpan.FromSeconds(120), new LoggingHandler(new Logger()));
 var client = new TruliooApiClient(context);
-
-await client.Connection.TestAuthenticationAsync();
+try
+{
+    var res = await client.Connection.TestAuthenticationAsync();
+    Console.WriteLine(res);
+}
+catch (RequestException ex)
+{
+    Console.WriteLine($"HTTP Non-Success Exception: {ex}");
+}
+catch (Exception e)
+{
+    Console.WriteLine($"Connectivity Exception: {e}");
+}
 
 /// <summary>
 /// TODO: Implement as desired
@@ -45,7 +57,7 @@ internal class LoggingHandler : GZipDecompressionHandler
     }
 }
 
-//duplicated from https://github.com/Trulioo/sdk-csharp-v1/tree/master/src/Trulioo.Client.V1/Compressor
+//essentially duplicated from https://github.com/Trulioo/sdk-csharp-v1/tree/master/src/Trulioo.Client.V1/Compressor
 //for access to internal classes
 
 internal class GZipCompressor
@@ -58,7 +70,7 @@ internal class GZipCompressor
     /// <param name="source"></param>
     /// <param name="destination"></param>
     /// <returns></returns>
-    public Task Compress(Stream source, Stream destination)
+    public static Task Compress(Stream source, Stream destination)
     {
         var compressed = CreateCompressionStream(destination);
         return Pump(source, compressed).ContinueWith(task => compressed.Dispose());
@@ -118,6 +130,8 @@ internal class GZipDecompressionHandler : HttpClientHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        //this is not enabled in the client by default; initial experiments showed little gain in most cases
+        request.Content = await CompressContentAsync(request.Content).ConfigureAwait(false);
         var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
         if (response.Content.Headers.ContentEncoding != null && response.Content.Headers.ContentEncoding.Any())
@@ -130,6 +144,25 @@ internal class GZipDecompressionHandler : HttpClientHandler
             }
         }
         return response;
+    }
+
+    private static async Task<HttpContent> CompressContentAsync(HttpContent rawContent)
+    {
+        if (rawContent == null) return null;
+        using (rawContent)
+        {
+            var compressed = new MemoryStream();
+            await GZipCompressor.Compress(await rawContent.ReadAsStreamAsync(), compressed).ConfigureAwait(false);
+
+            // set position back to 0 so it can be read again
+            compressed.Position = 0;
+
+            var newContent = new StreamContent(compressed);
+            newContent.Headers.Add("Content-Encoding", "gzip");
+            // copy content type so we know how to load correct formatter
+            newContent.Headers.ContentType = rawContent.Headers.ContentType;
+            return newContent;
+        }
     }
 
     private static async Task<HttpContent> DecompressContentAsync(HttpContent compressedContent, GZipCompressor compressor)
