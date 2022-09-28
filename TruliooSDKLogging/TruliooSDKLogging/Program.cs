@@ -19,7 +19,7 @@ catch (Exception e)
 }
 
 /// <summary>
-/// TODO: Implement as desired
+/// TODO: Implement as desired; eg use Trace instead of Console
 /// </summary>
 public class Logger
 {
